@@ -140,6 +140,11 @@ EOF
 Update the python3 path (`which python3`) and the script path, then load it:
 
 ```bash
+Load it:
+launchctl load ~/Library/LaunchAgents/com.commute-eta.plist
+
+To reload after changes:
+launchctl unload ~/Library/LaunchAgents/com.commute-eta.plist
 launchctl load ~/Library/LaunchAgents/com.commute-eta.plist
 ```
 
