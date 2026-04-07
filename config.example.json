@@ -2,6 +2,10 @@
   "api_key": "YOUR_GOOGLE_MAPS_API_KEY",
   "poll_interval_seconds": 300,
   "show_route_index": 0,
+  "active_hours": [
+    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "06:00", "end": "09:00"},
+    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "15:00", "end": "19:00"}
+  ],
   "destinations": [
     {
       "name": "Home",

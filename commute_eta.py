@@ -36,6 +36,10 @@ LOG_FILE = CONFIG_DIR / "commute_eta.log"
 DEFAULT_CONFIG = {
     "api_key": "YOUR_GOOGLE_MAPS_API_KEY",
     "poll_interval_seconds": 300,
+    "active_hours": [
+        {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "06:00", "end": "09:00"},
+        {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "15:00", "end": "19:00"},
+    ],
     "destinations": [
         {
             "name": "Home",
@@ -52,6 +56,10 @@ DEFAULT_CONFIG = {
     ],
     "show_route_index": 0,
     "departure_time": "now"
+}
+
+DAY_MAP = {
+    "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6
 }
 
 
@@ -73,6 +81,55 @@ def load_config():
     return config
 
 
+def is_active_now(active_hours):
+    """Check if the current time falls within any active window."""
+    if not active_hours:
+        return True  # No schedule = always active
+
+    now = datetime.now()
+    current_day = now.weekday()  # 0=Mon, 6=Sun
+    current_time = now.strftime("%H:%M")
+
+    for window in active_hours:
+        days = window.get("days", [])
+        start = window.get("start", "00:00")
+        end = window.get("end", "23:59")
+
+        day_nums = [DAY_MAP.get(d.lower()[:3], -1) for d in days]
+        if current_day in day_nums and start <= current_time <= end:
+            return True
+
+    return False
+
+
+def next_active_time(active_hours):
+    """Return a human-readable string for when the next active window starts."""
+    if not active_hours:
+        return None
+
+    now = datetime.now()
+    current_day = now.weekday()
+    current_time = now.strftime("%H:%M")
+
+    for day_offset in range(8):
+        check_day = (current_day + day_offset) % 7
+        for window in active_hours:
+            days = window.get("days", [])
+            start = window.get("start", "00:00")
+            day_nums = [DAY_MAP.get(d.lower()[:3], -1) for d in days]
+
+            if check_day in day_nums:
+                if day_offset == 0 and start > current_time:
+                    return f"today at {start}"
+                elif day_offset == 1:
+                    return f"tomorrow at {start}"
+                elif day_offset > 0:
+                    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                    return f"{day_names[check_day]} at {start}"
+
+    return None
+
+
 def log(msg):
     """Append a timestamped line to the log file."""
     try:
@@ -91,14 +148,7 @@ DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 
 def fetch_eta(api_key, origin, destination, departure_time="now"):
     """
-    Call Google Maps Directions API and return a dict with:
-        duration_text:    e.g. "1 hr 42 min"
-        duration_seconds: int
-        traffic_text:     e.g. "1 hr 58 min"  (with traffic)
-        traffic_seconds:  int
-        summary:          route name, e.g. "CA-91 E"
-        status:           "ok" | "error"
-        error:            error message if status == "error"
+    Call Google Maps Directions API and return a list of route dicts or an error dict.
     """
     params = {
         "origin": origin,
@@ -130,7 +180,6 @@ def fetch_eta(api_key, origin, destination, departure_time="now"):
             "duration_text": leg["duration"]["text"],
             "duration_seconds": leg["duration"]["value"],
         }
-        # duration_in_traffic is only present for driving with departure_time
         if "duration_in_traffic" in leg:
             info["traffic_text"] = leg["duration_in_traffic"]["text"]
             info["traffic_seconds"] = leg["duration_in_traffic"]["value"]
@@ -165,6 +214,8 @@ TRAFFIC_ICONS = {
     "severe": "🔴",
 }
 
+SLEEP_ICON = "😴"
+
 
 # ---------------------------------------------------------------------------
 # Menu Bar App
@@ -188,22 +239,31 @@ class CommuteETA(rumps.App):
 
         self.poll_interval = self.config.get("poll_interval_seconds", 300)
         self.destinations = self.config.get("destinations", [])
+        self.active_hours = self.config.get("active_hours", [])
         self.api_key = self.config["api_key"]
         self.show_index = self.config.get("show_route_index", 0)
         self.last_results = {}
         self.last_update = None
+        self.is_sleeping = False
+        self.is_paused = False
 
         # Build menu skeleton
         self.dest_items = {}
         for i, dest in enumerate(self.destinations):
             icon = dest.get("icon", "📍")
             name = dest.get("name", f"Dest {i}")
-            item = rumps.MenuItem(f"{icon} {name}: fetching…")
+            item = rumps.MenuItem(f"{icon} {name}: waiting…")
             item.set_callback(self.make_dest_callback(i))
             self.dest_items[i] = item
             self.menu.add(item)
 
         self.menu.add(None)  # separator
+
+        self.toggle_item = rumps.MenuItem("⏸ Pause", callback=self.toggle_polling)
+        self.menu.add(self.toggle_item)
+
+        self.schedule_item = rumps.MenuItem("")
+        self.menu.add(self.schedule_item)
 
         self.status_item = rumps.MenuItem("Last update: —")
         self.menu.add(self.status_item)
@@ -216,20 +276,50 @@ class CommuteETA(rumps.App):
         self.menu.add(None)
         self.menu.add(rumps.MenuItem("Quit", callback=rumps.quit_application))
 
-        # Initial fetch in background
+        # Start polling — the timer checks active hours each tick
         self.start_poll()
 
     # -- Polling ---------------------------------------------------------------
 
     def start_poll(self):
         """Kick off the repeating poll timer."""
-        self.poll_timer = rumps.Timer(self.poll_tick, self.poll_interval)
+        # Use a short tick (60s) so we can detect active window transitions quickly
+        self.poll_timer = rumps.Timer(self.poll_tick, 60)
         self.poll_timer.start()
-        # Also do an immediate fetch
-        threading.Thread(target=self.fetch_all, daemon=True).start()
+        self._seconds_since_last_poll = self.poll_interval  # Force immediate fetch
+        self.poll_tick(None)
 
     def poll_tick(self, _):
-        threading.Thread(target=self.fetch_all, daemon=True).start()
+        if self.is_paused:
+            return
+
+        active = is_active_now(self.active_hours)
+
+        if not active:
+            if not self.is_sleeping:
+                # Just entered sleep mode
+                self.is_sleeping = True
+                nxt = next_active_time(self.active_hours)
+                if nxt:
+                    self.schedule_item.title = f"💤 Sleeping — next: {nxt}"
+                else:
+                    self.schedule_item.title = "💤 Sleeping — no upcoming windows"
+                self.title = SLEEP_ICON
+                log("Entering sleep mode (outside active hours)")
+            return
+
+        # We're in an active window
+        if self.is_sleeping:
+            self.is_sleeping = False
+            self.schedule_item.title = "🟢 Active"
+            self._seconds_since_last_poll = self.poll_interval  # Force fetch on wake
+            log("Waking up (entering active hours)")
+
+        self._seconds_since_last_poll = getattr(self, "_seconds_since_last_poll", 0) + 60
+
+        if self._seconds_since_last_poll >= self.poll_interval:
+            self._seconds_since_last_poll = 0
+            threading.Thread(target=self.fetch_all, daemon=True).start()
 
     def fetch_all(self):
         for i, dest in enumerate(self.destinations):
@@ -261,7 +351,6 @@ class CommuteETA(rumps.App):
             if best.get("summary"):
                 label += f"  via {best['summary']}"
 
-            # Add alternate routes as sub-info
             if len(result) > 1:
                 alts = []
                 for r in result:
@@ -270,7 +359,7 @@ class CommuteETA(rumps.App):
                         alts.append(
                             f"    ↳ {r['traffic_text']} {TRAFFIC_ICONS.get(s, '')} via {r.get('summary', '?')}"
                         )
-                label += "\n" + "\n".join(alts)  # rumps may truncate, but worth trying
+                label += "\n" + "\n".join(alts)
 
             self.dest_items[idx].title = label
 
@@ -306,7 +395,6 @@ class CommuteETA(rumps.App):
         def callback(_):
             self.show_index = idx
             self.update_title()
-            # Persist preference
             self.config["show_route_index"] = idx
             try:
                 with open(CONFIG_FILE, "w") as f:
@@ -316,8 +404,24 @@ class CommuteETA(rumps.App):
         return callback
 
     def manual_refresh(self, _):
+        """Force a refresh regardless of active hours or pause state."""
         self.title = "⏳"
         threading.Thread(target=self.fetch_all, daemon=True).start()
+
+    def toggle_polling(self, _):
+        """Toggle polling on/off. Stays in menu bar either way."""
+        if self.is_paused:
+            self.is_paused = False
+            self.toggle_item.title = "⏸ Pause"
+            self.schedule_item.title = "🟢 Active"
+            self._seconds_since_last_poll = self.poll_interval  # Force immediate fetch
+            log("Polling resumed (manual toggle)")
+        else:
+            self.is_paused = True
+            self.toggle_item.title = "▶ Resume"
+            self.schedule_item.title = "⏸ Paused"
+            self.title = "⏸"
+            log("Polling paused (manual toggle)")
 
     def open_config(self, _):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -335,8 +439,6 @@ class CommuteETA(rumps.App):
             destination = requests.utils.quote(dest["destination"])
             url = f"https://www.google.com/maps/dir/{origin}/{destination}"
             subprocess.run(["open", url])
-
-    # -- Alt routes in dropdown ------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

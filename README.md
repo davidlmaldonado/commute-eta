@@ -2,16 +2,16 @@
 
 A lightweight macOS menu bar app that shows live drive time to saved destinations using Google Maps traffic data. Glance at your menu bar, know when to leave.
 
-![example](https://img.shields.io/badge/menu_bar-🏠_1_hr_42_min_🟢-333?style=flat-square)
-
 ## What it does
 
 - Sits in your macOS menu bar showing real-time drive time with traffic
 - Color-coded severity: 🟢 clear, 🟡 moderate, 🟠 heavy, 🔴 severe
 - Shows alternate routes in the dropdown
 - Click a destination to make it the title-bar display
+- **Schedule-aware** — only polls during your commute windows, sleeps the rest of the time (😴)
+- "Refresh Now" forces a check anytime, even outside active hours
 - "Open in Google Maps" to see the full route
-- Polls every 5 minutes (configurable)
+- Configurable poll interval (default: every 5 minutes)
 
 ## Setup
 
@@ -23,7 +23,7 @@ A lightweight macOS menu bar app that shows live drive time to saved destination
 4. Go to **Credentials** → **Create Credentials** → **API Key**
 5. (Recommended) Restrict the key to **Directions API** only
 
-**Cost:** Google gives you $200/month free credit. At one poll every 5 minutes, that's ~8,640 requests/month. Directions API costs $0.005/request = ~$43/month. Well within the free tier.
+**Cost:** Google gives you $200/month free credit. With active hours set to typical commute windows (6 hrs/day, weekdays only), you'll use roughly 1,500 requests/month — about $8, well within the free tier.
 
 ### 2. Install Dependencies
 
@@ -49,6 +49,10 @@ Edit `~/.commute_eta/config.json`:
   "api_key": "AIza...",
   "poll_interval_seconds": 300,
   "show_route_index": 0,
+  "active_hours": [
+    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "06:00", "end": "09:00"},
+    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "15:00", "end": "19:00"}
+  ],
   "destinations": [
     {
       "name": "Home",
@@ -66,7 +70,7 @@ Edit `~/.commute_eta/config.json`:
 }
 ```
 
-You can add as many destinations as you want. Use full street addresses for best accuracy.
+Use full street addresses for best route accuracy.
 
 ### 4. Run
 
@@ -118,7 +122,22 @@ launchctl load ~/Library/LaunchAgents/com.commute-eta.plist
 | `api_key` | string | — | Your Google Maps API key |
 | `poll_interval_seconds` | int | 300 | How often to refresh (seconds) |
 | `show_route_index` | int | 0 | Which destination to show in menu bar |
+| `active_hours` | array | — | Time windows when polling is active |
 | `destinations` | array | — | List of destination objects |
+
+### Active Hours
+
+Each entry in `active_hours` defines a time window:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `days` | array | Day abbreviations: `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` |
+| `start` | string | Start time in 24hr format, e.g. `"06:00"` |
+| `end` | string | End time in 24hr format, e.g. `"09:00"` |
+
+Outside active hours, the app shows 😴 in the menu bar and makes zero API calls. "Refresh Now" still works anytime.
+
+To disable scheduling and poll 24/7, set `"active_hours": []`.
 
 ### Destination Object
 
