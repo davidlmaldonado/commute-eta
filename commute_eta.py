@@ -40,12 +40,12 @@ DEFAULT_CONFIG = {
         {
             "name": "Home",
             "origin": "Burbank, CA",
-            "destination": "Hemet, CA",
+            "destination": "Los Angeles, CA",
             "icon": "🏠"
         },
         {
             "name": "Office",
-            "origin": "Hemet, CA",
+            "origin": "Los Angeles, CA",
             "destination": "Burbank, CA",
             "icon": "🏢"
         }
