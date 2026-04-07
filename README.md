@@ -33,16 +33,22 @@ pip3 install rumps requests
 
 ### 3. Configure
 
-```bash
-# First run creates ~/.commute_eta/config.json with defaults
-python3 commute_eta.py
+The app stores its config at `~/.commute_eta/config.json` (not in the repo folder).
 
-# Or copy the example and edit
-mkdir -p ~/.commute_eta
-cp config.example.json ~/.commute_eta/config.json
+**First run** — this generates the default config file and exits:
+
+```bash
+cd ~/Documents/GitHub/commute-eta   # or wherever you cloned the repo
+python3 commute_eta.py
 ```
 
-Edit `~/.commute_eta/config.json`:
+You'll see a menu bar icon with a warning. Quit it (click icon → Quit), then open the config:
+
+```bash
+open ~/.commute_eta/config.json
+```
+
+Edit it with your API key and real addresses:
 
 ```json
 {
@@ -73,6 +79,8 @@ Edit `~/.commute_eta/config.json`:
 Use full street addresses for best route accuracy.
 
 ### 4. Run
+
+Save the config, then run again from the repo folder:
 
 ```bash
 python3 commute_eta.py
