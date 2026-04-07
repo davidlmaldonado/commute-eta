@@ -33,7 +33,7 @@ pip3 install rumps requests
 
 ### 3. Configure
 
-The app stores its config at `~/.commute_eta/config.json` (not in the repo folder).
+The app stores its config at `~/.commute_eta/config.json`.
 
 **First run** — this generates the default config file and exits:
 
