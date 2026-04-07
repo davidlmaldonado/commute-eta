@@ -1,0 +1,19 @@
+{
+  "api_key": "YOUR_GOOGLE_MAPS_API_KEY",
+  "poll_interval_seconds": 300,
+  "show_route_index": 0,
+  "destinations": [
+    {
+      "name": "Home",
+      "origin": "Burbank, CA",
+      "destination": "Hemet, CA",
+      "icon": "🏠"
+    },
+    {
+      "name": "Office",
+      "origin": "Hemet, CA",
+      "destination": "Burbank, CA",
+      "icon": "🏢"
+    }
+  ]
+}
