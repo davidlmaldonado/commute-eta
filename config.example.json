@@ -3,18 +3,26 @@
   "poll_interval_seconds": 300,
   "show_route_index": 0,
   "active_hours": [
-    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "06:00", "end": "09:00"},
-    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "15:00", "end": "19:00"}
+    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "06:00", "end": "09:00", "show_destination": 1},
+    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "15:00", "end": "19:00", "show_destination": 0}
   ],
+  "notifications": {
+    "enabled": true,
+    "spike_threshold_minutes": 15
+  },
+  "arrive_by": {
+    "Morning Commute": "08:30",
+    "Heading Home": "18:30"
+  },
   "destinations": [
     {
-      "name": "Home",
+      "name": "Heading Home",
       "origin": "Burbank, CA",
       "destination": "Los Angeles, CA",
       "icon": "🏠"
     },
     {
-      "name": "Office",
+      "name": "Morning Commute",
       "origin": "Los Angeles, CA",
       "destination": "Burbank, CA",
       "icon": "🏢"

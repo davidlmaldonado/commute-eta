@@ -19,8 +19,12 @@ import sys
 import time
 import threading
 import subprocess
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import urllib3
+warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 
 import rumps
 import requests
@@ -37,18 +41,26 @@ DEFAULT_CONFIG = {
     "api_key": "YOUR_GOOGLE_MAPS_API_KEY",
     "poll_interval_seconds": 300,
     "active_hours": [
-        {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "06:00", "end": "09:00"},
-        {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "15:00", "end": "19:00"},
+        {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "06:00", "end": "09:00", "show_destination": 1},
+        {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "15:00", "end": "19:00", "show_destination": 0},
     ],
+    "notifications": {
+        "enabled": True,
+        "spike_threshold_minutes": 15
+    },
+    "arrive_by": {
+        "Morning Commute": "08:30",
+        "Heading Home": "18:30"
+    },
     "destinations": [
         {
-            "name": "Home",
+            "name": "Heading Home",
             "origin": "Burbank, CA",
             "destination": "Los Angeles, CA",
             "icon": "🏠"
         },
         {
-            "name": "Office",
+            "name": "Morning Commute",
             "origin": "Los Angeles, CA",
             "destination": "Burbank, CA",
             "icon": "🏢"
@@ -70,7 +82,7 @@ def load_config():
     if not CONFIG_FILE.exists():
         with open(CONFIG_FILE, "w") as f:
             json.dump(DEFAULT_CONFIG, f, indent=2)
-        return None  # Signal that config needs to be set up
+        return None
 
     with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
@@ -82,12 +94,14 @@ def load_config():
 
 
 def is_active_now(active_hours):
-    """Check if the current time falls within any active window."""
+    """Check if the current time falls within any active window.
+    Returns (True, window_dict) if active, (False, None) if not.
+    """
     if not active_hours:
-        return True  # No schedule = always active
+        return True, None
 
     now = datetime.now()
-    current_day = now.weekday()  # 0=Mon, 6=Sun
+    current_day = now.weekday()
     current_time = now.strftime("%H:%M")
 
     for window in active_hours:
@@ -97,9 +111,9 @@ def is_active_now(active_hours):
 
         day_nums = [DAY_MAP.get(d.lower()[:3], -1) for d in days]
         if current_day in day_nums and start <= current_time <= end:
-            return True
+            return True, window
 
-    return False
+    return False, None
 
 
 def next_active_time(active_hours):
@@ -137,6 +151,49 @@ def log(msg):
             f.write(f"{datetime.now().isoformat()} | {msg}\n")
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def format_minutes(seconds):
+    """Convert seconds to a compact time string."""
+    mins = round(seconds / 60)
+    if mins >= 60:
+        h = mins // 60
+        m = mins % 60
+        return f"{h}h {m}m" if m else f"{h}h"
+    return f"{mins}m"
+
+
+def compute_leave_by(arrive_by_str, travel_seconds):
+    """Given a target arrival time (HH:MM) and travel seconds, return leave-by time string."""
+    try:
+        now = datetime.now()
+        arrive_time = datetime.strptime(arrive_by_str, "%H:%M").replace(
+            year=now.year, month=now.month, day=now.day
+        )
+        leave_time = arrive_time - timedelta(seconds=travel_seconds)
+        if leave_time < now:
+            return None  # Already too late
+        return leave_time.strftime("%-I:%M %p")
+    except (ValueError, TypeError):
+        return None
+
+
+def trend_indicator(current_seconds, previous_seconds):
+    """Return a trend string with actual change, e.g. ' +5m' or ' -3m'."""
+    if previous_seconds is None:
+        return ""
+    diff = current_seconds - previous_seconds
+    diff_mins = round(abs(diff) / 60)
+    if diff > 120:       # > 2 min worse
+        return f" ▲{diff_mins}m"
+    elif diff < -120:    # > 2 min better
+        return f" ▼{diff_mins}m"
+    else:
+        return ""  # Steady — no clutter
 
 
 # ---------------------------------------------------------------------------
@@ -242,12 +299,19 @@ class CommuteETA(rumps.App):
         self.active_hours = self.config.get("active_hours", [])
         self.api_key = self.config["api_key"]
         self.show_index = self.config.get("show_route_index", 0)
+        self.arrive_by = self.config.get("arrive_by", {})
+        self.notif_config = self.config.get("notifications", {"enabled": True, "spike_threshold_minutes": 15})
         self.last_results = {}
         self.last_update = None
         self.is_sleeping = False
         self.is_paused = False
 
-        # Build menu skeleton
+        # Track previous best times for trend arrows and spike detection
+        self.previous_best = {}   # idx -> traffic_seconds from last poll
+
+        # ── Menu layout ──────────────────────────────────────────────────
+
+        # Destination items
         self.dest_items = {}
         for i, dest in enumerate(self.destinations):
             icon = dest.get("icon", "📍")
@@ -257,8 +321,15 @@ class CommuteETA(rumps.App):
             self.dest_items[i] = item
             self.menu.add(item)
 
-        self.menu.add(None)  # separator
+        self.menu.add(None)
 
+        # Leave-by item
+        self.leave_by_item = rumps.MenuItem("")
+        self.menu.add(self.leave_by_item)
+
+        self.menu.add(None)
+
+        # Status section
         self.toggle_item = rumps.MenuItem("⏸ Pause", callback=self.toggle_polling)
         self.menu.add(self.toggle_item)
 
@@ -270,34 +341,33 @@ class CommuteETA(rumps.App):
 
         self.menu.add(None)
 
+        # Actions
         self.menu.add(rumps.MenuItem("Refresh Now", callback=self.manual_refresh))
         self.menu.add(rumps.MenuItem("Open Config", callback=self.open_config))
         self.menu.add(rumps.MenuItem("Open in Google Maps", callback=self.open_gmaps))
         self.menu.add(None)
         self.menu.add(rumps.MenuItem("Quit", callback=rumps.quit_application))
 
-        # Start polling — the timer checks active hours each tick
+        # Start polling
         self.start_poll()
 
-    # -- Polling ---------------------------------------------------------------
+    # ── Polling ──────────────────────────────────────────────────────────
 
     def start_poll(self):
         """Kick off the repeating poll timer."""
-        # Use a short tick (60s) so we can detect active window transitions quickly
         self.poll_timer = rumps.Timer(self.poll_tick, 60)
         self.poll_timer.start()
-        self._seconds_since_last_poll = self.poll_interval  # Force immediate fetch
+        self._seconds_since_last_poll = self.poll_interval
         self.poll_tick(None)
 
     def poll_tick(self, _):
         if self.is_paused:
             return
 
-        active = is_active_now(self.active_hours)
+        active, window = is_active_now(self.active_hours)
 
         if not active:
             if not self.is_sleeping:
-                # Just entered sleep mode
                 self.is_sleeping = True
                 nxt = next_active_time(self.active_hours)
                 if nxt:
@@ -305,6 +375,7 @@ class CommuteETA(rumps.App):
                 else:
                     self.schedule_item.title = "💤 Sleeping — no upcoming windows"
                 self.title = SLEEP_ICON
+                self.leave_by_item.title = ""
                 log("Entering sleep mode (outside active hours)")
             return
 
@@ -312,8 +383,16 @@ class CommuteETA(rumps.App):
         if self.is_sleeping:
             self.is_sleeping = False
             self.schedule_item.title = "🟢 Active"
-            self._seconds_since_last_poll = self.poll_interval  # Force fetch on wake
+            self._seconds_since_last_poll = self.poll_interval
             log("Waking up (entering active hours)")
+
+        # Auto-switch destination based on active window config
+        if window and "show_destination" in window:
+            new_index = window["show_destination"]
+            if new_index != self.show_index and new_index < len(self.destinations):
+                self.show_index = new_index
+                dest_name = self.destinations[new_index].get("name", "")
+                log(f"Auto-switched to destination {new_index}: {dest_name}")
 
         self._seconds_since_last_poll = getattr(self, "_seconds_since_last_poll", 0) + 60
 
@@ -322,21 +401,49 @@ class CommuteETA(rumps.App):
             threading.Thread(target=self.fetch_all, daemon=True).start()
 
     def fetch_all(self):
-        for i, dest in enumerate(self.destinations):
-            result = fetch_eta(
-                self.api_key,
-                dest["origin"],
-                dest["destination"],
-            )
-            self.last_results[i] = result
-            self.update_menu_item(i, dest, result)
+        idx = self.show_index
+        if idx >= len(self.destinations):
+            return
+
+        dest = self.destinations[idx]
+        result = fetch_eta(
+            self.api_key,
+            dest["origin"],
+            dest["destination"],
+        )
+
+        # ── Spike detection + trend tracking ─────────────────────────
+        if isinstance(result, list) and len(result) > 0:
+            best = min(result, key=lambda r: r["traffic_seconds"])
+            current_best_sec = best["traffic_seconds"]
+            prev_sec = self.previous_best.get(idx)
+
+            # Check for traffic spike notification
+            if prev_sec is not None and self.notif_config.get("enabled", True):
+                spike_threshold = self.notif_config.get("spike_threshold_minutes", 15) * 60
+                increase = current_best_sec - prev_sec
+                if increase >= spike_threshold:
+                    dest_name = dest.get("name", "")
+                    rumps.notification(
+                        title="Traffic Spike",
+                        subtitle=dest_name,
+                        message=f"Drive time jumped to {best['traffic_text']} (+{format_minutes(increase)})",
+                    )
+                    log(f"Spike notification: {dest_name} +{format_minutes(increase)}")
+
+            self.previous_best[idx] = current_best_sec
+
+        self.last_results[idx] = result
+        self.update_menu_item(idx, dest, result)
 
         self.last_update = datetime.now()
-        self.status_item.title = f"Updated {self.last_update.strftime('%I:%M %p')}"
-        log(f"Poll complete: {len(self.destinations)} destinations")
+        self.status_item.title = f"Updated {self.last_update.strftime('%-I:%M %p')}"
+        log(f"Poll complete: {dest['name']}")
 
-        # Update title bar with the selected destination
         self.update_title()
+        self.update_leave_by()
+
+    # ── Display ──────────────────────────────────────────────────────────
 
     def update_menu_item(self, idx, dest, result):
         icon = dest.get("icon", "📍")
@@ -346,8 +453,13 @@ class CommuteETA(rumps.App):
             best = min(result, key=lambda r: r["traffic_seconds"])
             severity = traffic_label(best["duration_seconds"], best["traffic_seconds"])
             traffic_icon = TRAFFIC_ICONS.get(severity, "")
+            compact_time = format_minutes(best["traffic_seconds"])
 
-            label = f"{icon} {name}: {best['traffic_text']} {traffic_icon}"
+            # Trend indicator
+            prev = self.previous_best.get(idx)
+            trend = trend_indicator(best["traffic_seconds"], prev) if prev else ""
+
+            label = f"{icon} {name}: {compact_time}{trend} {traffic_icon}"
             if best.get("summary"):
                 label += f"  via {best['summary']}"
 
@@ -356,8 +468,9 @@ class CommuteETA(rumps.App):
                 for r in result:
                     if r != best:
                         s = traffic_label(r["duration_seconds"], r["traffic_seconds"])
+                        alt_time = format_minutes(r["traffic_seconds"])
                         alts.append(
-                            f"    ↳ {r['traffic_text']} {TRAFFIC_ICONS.get(s, '')} via {r.get('summary', '?')}"
+                            f"    ↳ {alt_time} {TRAFFIC_ICONS.get(s, '')} via {r.get('summary', '?')}"
                         )
                 label += "\n" + "\n".join(alts)
 
@@ -381,20 +494,59 @@ class CommuteETA(rumps.App):
             best = min(result, key=lambda r: r["traffic_seconds"])
             severity = traffic_label(best["duration_seconds"], best["traffic_seconds"])
             traffic_icon = TRAFFIC_ICONS.get(severity, "")
+            compact_time = format_minutes(best["traffic_seconds"])
+
+            # Trend indicator in title bar
+            prev = self.previous_best.get(idx)
+            trend = trend_indicator(best["traffic_seconds"], prev) if prev else ""
+
             short_name = dest.get("icon", "") or dest.get("name", "")[:3]
-            self.title = f"{short_name} {best['traffic_text']} {traffic_icon}"
+            self.title = f"{short_name} {compact_time}{trend} {traffic_icon}"
         elif isinstance(result, dict) and result.get("status") == "error":
             self.title = "⚠️ ETA"
         else:
             self.title = "⏳"
 
-    # -- Callbacks -------------------------------------------------------------
+    def update_leave_by(self):
+        """Update the leave-by time in the dropdown."""
+        idx = self.show_index
+        result = self.last_results.get(idx)
+        dest = self.destinations[idx] if idx < len(self.destinations) else None
+
+        if dest is None or result is None:
+            self.leave_by_item.title = ""
+            return
+
+        dest_name = dest.get("name", "")
+        arrive_by_str = self.arrive_by.get(dest_name)
+
+        if not arrive_by_str:
+            self.leave_by_item.title = ""
+            return
+
+        if isinstance(result, list) and len(result) > 0:
+            best = min(result, key=lambda r: r["traffic_seconds"])
+            leave_time = compute_leave_by(arrive_by_str, best["traffic_seconds"])
+            # Convert arrive_by to 12-hour display
+            try:
+                arrive_display = datetime.strptime(arrive_by_str, "%H:%M").strftime("%-I:%M %p")
+            except ValueError:
+                arrive_display = arrive_by_str
+            if leave_time:
+                self.leave_by_item.title = f"🕐 Leave by {leave_time} to arrive by {arrive_display}"
+            else:
+                self.leave_by_item.title = f"🕐 Leave now — cutting it close for {arrive_display}"
+        else:
+            self.leave_by_item.title = ""
+
+    # ── Callbacks ────────────────────────────────────────────────────────
 
     def make_dest_callback(self, idx):
         """Return a callback that sets this destination as the title-bar display."""
         def callback(_):
             self.show_index = idx
             self.update_title()
+            self.update_leave_by()
             self.config["show_route_index"] = idx
             try:
                 with open(CONFIG_FILE, "w") as f:
@@ -414,7 +566,7 @@ class CommuteETA(rumps.App):
             self.is_paused = False
             self.toggle_item.title = "⏸ Pause"
             self.schedule_item.title = "🟢 Active"
-            self._seconds_since_last_poll = self.poll_interval  # Force immediate fetch
+            self._seconds_since_last_poll = self.poll_interval
             log("Polling resumed (manual toggle)")
         else:
             self.is_paused = True
