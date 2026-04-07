@@ -15,7 +15,22 @@ A lightweight macOS menu bar app that shows live drive time to saved destination
 
 ## Setup
 
-### 1. Get a Google Maps API Key
+### 1. Clone the Repo
+
+```bash
+git clone https://github.com/davidlmaldonado/commute-eta.git
+cd commute-eta
+```
+
+Or click the green **"<> Code"** button on GitHub and select **"Open with GitHub Desktop"**.
+
+### 2. Install Dependencies
+
+```bash
+pip3 install rumps requests
+```
+
+### 3. Get a Google Maps API Key
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a project (or use an existing one)
@@ -25,20 +40,13 @@ A lightweight macOS menu bar app that shows live drive time to saved destination
 
 **Cost:** Google gives you $200/month free credit. With active hours set to typical commute windows (6 hrs/day, weekdays only), you'll use roughly 1,500 requests/month — about $8, well within the free tier.
 
-### 2. Install Dependencies
+### 4. Configure
+
+The app stores its config at `~/.commute_eta/config.json` (not in the repo folder).
+
+**First run** — this generates the default config file:
 
 ```bash
-pip3 install rumps requests
-```
-
-### 3. Configure
-
-The app stores its config at `~/.commute_eta/config.json`.
-
-**First run** — this generates the default config file and exits:
-
-```bash
-cd ~/Documents/GitHub/commute-eta   # or wherever you cloned the repo
 python3 commute_eta.py
 ```
 
@@ -78,7 +86,7 @@ Edit it with your API key and real addresses:
 
 Use full street addresses for best route accuracy.
 
-### 4. Run
+### 5. Run
 
 Save the config, then run again from the repo folder:
 
@@ -86,7 +94,7 @@ Save the config, then run again from the repo folder:
 python3 commute_eta.py
 ```
 
-### 5. (Optional) Auto-start at Login
+### 6. (Optional) Auto-start at Login
 
 Create a Launch Agent:
 
