@@ -7,17 +7,18 @@ A lightweight macOS menu bar app that shows live drive time to saved destination
 ## What it does
 
 - Sits in your macOS menu bar showing real-time drive time with traffic
-- Color-coded severity: 🟢 clear, 🟡 moderate, 🟠 heavy, 🔴 severe
-- **Trend arrows** — see if traffic is getting better (↓), worse (↑), or steady (→)
+- **Traffic severity meter** — `●○○○` clear, `●●○○` moderate, `●●●○` heavy, `●●●●` severe
+- **Trend deltas** — see if traffic is getting better (▼3m), worse (▲5m), or steady
 - **Leave-by time** — tells you when to leave to arrive by a target time
 - **Traffic spike alerts** — macOS notification when drive time jumps significantly
-- **Schedule-aware** — only polls during your commute windows, sleeps the rest of the time (😴)
+- **Schedule-aware** — only polls during your commute windows, sleeps the rest of the time
 - **Auto-switches** — shows the right destination based on time of day (morning = office, afternoon = home)
 - Shows alternate routes in the dropdown
 - Pause/resume toggle — stop polling without quitting
 - "Refresh Now" forces a check anytime
 - "Open in Google Maps" to see the full route
 - Only polls the active destination — saves API calls
+- Monochrome menu bar style that blends with native macOS
 
 ## Setup
 

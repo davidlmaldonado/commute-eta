@@ -264,14 +264,23 @@ def traffic_label(normal_sec, traffic_sec):
         return "severe"
 
 
+# Menu bar style: traffic light dot meter (filled = severity level)
 TRAFFIC_ICONS = {
+    "clear": "●○○○",
+    "moderate": "●●○○",
+    "heavy": "●●●○",
+    "severe": "●●●●",
+}
+
+# Dropdown style: keeps emoji for visual scanning in the menu
+TRAFFIC_ICONS_DROPDOWN = {
     "clear": "🟢",
     "moderate": "🟡",
     "heavy": "🟠",
     "severe": "🔴",
 }
 
-SLEEP_ICON = "😴"
+SLEEP_ICON = "zzz"
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +289,7 @@ SLEEP_ICON = "😴"
 
 class CommuteETA(rumps.App):
     def __init__(self):
-        super().__init__("⏳", quit_button=None)
+        super().__init__("ETA", quit_button=None)
 
         self.config = load_config()
 
@@ -452,7 +461,7 @@ class CommuteETA(rumps.App):
         if isinstance(result, list) and len(result) > 0:
             best = min(result, key=lambda r: r["traffic_seconds"])
             severity = traffic_label(best["duration_seconds"], best["traffic_seconds"])
-            traffic_icon = TRAFFIC_ICONS.get(severity, "")
+            traffic_icon = TRAFFIC_ICONS_DROPDOWN.get(severity, "")
             compact_time = format_minutes(best["traffic_seconds"])
 
             # Trend indicator
@@ -470,7 +479,7 @@ class CommuteETA(rumps.App):
                         s = traffic_label(r["duration_seconds"], r["traffic_seconds"])
                         alt_time = format_minutes(r["traffic_seconds"])
                         alts.append(
-                            f"    ↳ {alt_time} {TRAFFIC_ICONS.get(s, '')} via {r.get('summary', '?')}"
+                            f"    ↳ {alt_time} {TRAFFIC_ICONS_DROPDOWN.get(s, '')} via {r.get('summary', '?')}"
                         )
                 label += "\n" + "\n".join(alts)
 
@@ -487,25 +496,24 @@ class CommuteETA(rumps.App):
         dest = self.destinations[idx] if idx < len(self.destinations) else None
 
         if dest is None or result is None:
-            self.title = "⏳"
+            self.title = "ETA ..."
             return
 
         if isinstance(result, list) and len(result) > 0:
             best = min(result, key=lambda r: r["traffic_seconds"])
             severity = traffic_label(best["duration_seconds"], best["traffic_seconds"])
-            traffic_icon = TRAFFIC_ICONS.get(severity, "")
+            status = TRAFFIC_ICONS.get(severity, "")
             compact_time = format_minutes(best["traffic_seconds"])
 
             # Trend indicator in title bar
             prev = self.previous_best.get(idx)
             trend = trend_indicator(best["traffic_seconds"], prev) if prev else ""
 
-            short_name = dest.get("icon", "") or dest.get("name", "")[:3]
-            self.title = f"{short_name} {compact_time}{trend} {traffic_icon}"
+            self.title = f"{compact_time}{trend} {status}"
         elif isinstance(result, dict) and result.get("status") == "error":
-            self.title = "⚠️ ETA"
+            self.title = "ETA err"
         else:
-            self.title = "⏳"
+            self.title = "ETA ..."
 
     def update_leave_by(self):
         """Update the leave-by time in the dropdown."""
@@ -557,7 +565,7 @@ class CommuteETA(rumps.App):
 
     def manual_refresh(self, _):
         """Force a refresh regardless of active hours or pause state."""
-        self.title = "⏳"
+        self.title = "ETA ..."
         threading.Thread(target=self.fetch_all, daemon=True).start()
 
     def toggle_polling(self, _):
@@ -572,7 +580,7 @@ class CommuteETA(rumps.App):
             self.is_paused = True
             self.toggle_item.title = "▶ Resume"
             self.schedule_item.title = "⏸ Paused"
-            self.title = "⏸"
+            self.title = "ETA ||"
             log("Polling paused (manual toggle)")
 
     def open_config(self, _):
