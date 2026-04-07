@@ -2,6 +2,8 @@
 
 A lightweight macOS menu bar app that shows live drive time to saved destinations using Google Maps traffic data. Glance at your menu bar, know when to leave.
 
+![Commute ETA screenshot](images/menu-bar.png)
+
 ## What it does
 
 - Sits in your macOS menu bar showing real-time drive time with traffic
@@ -108,7 +110,13 @@ python3 commute_eta.py
 
 ### 6. (Optional) Auto-start at Login
 
-Create a Launch Agent:
+First, find your python3 path:
+
+```bash
+which python3
+```
+
+Then create a Launch Agent (replace the python3 and script paths with your own):
 
 ```bash
 cat > ~/Library/LaunchAgents/com.commute-eta.plist << 'EOF'
@@ -121,8 +129,8 @@ cat > ~/Library/LaunchAgents/com.commute-eta.plist << 'EOF'
     <string>com.commute-eta</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/python3</string>
-        <string>/path/to/commute_eta.py</string>
+        <string>/usr/bin/python3</string>
+        <string>/Users/YOUR_USERNAME/commute-eta/commute_eta.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -137,13 +145,15 @@ cat > ~/Library/LaunchAgents/com.commute-eta.plist << 'EOF'
 EOF
 ```
 
-Update the python3 path (`which python3`) and the script path, then load it:
+Load it:
 
 ```bash
-Load it:
 launchctl load ~/Library/LaunchAgents/com.commute-eta.plist
+```
 
 To reload after changes:
+
+```bash
 launchctl unload ~/Library/LaunchAgents/com.commute-eta.plist
 launchctl load ~/Library/LaunchAgents/com.commute-eta.plist
 ```
