@@ -29,8 +29,6 @@ git clone https://github.com/davidlmaldonado/commute-eta.git
 cd commute-eta
 ```
 
-Or click the green **"<> Code"** button on GitHub and select **"Open with GitHub Desktop"**.
-
 ### 2. Install Dependencies
 
 ```bash
@@ -49,7 +47,7 @@ pip3 install rumps requests
 
 ### 4. Configure
 
-The app stores its config at `~/.commute_eta/config.json` (not in the repo folder).
+The app stores its config at `~/.commute_eta/config.json`.
 
 **First run** — this generates the default config file:
 
